@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <title>Excel多语言翻译工具</title>
+  <style>
+    body{font-family:'Microsoft YaHei',Arial,sans-serif;max-width:1200px;margin:0 auto;padding:20px;background:#f5f5f5;}
+    .container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1);}
+    h1{color:#2c3e50;text-align:center;margin-bottom:30px;}
+    .upload-area{border:2px dashed #3498db;border-radius:10px;padding:40px;text-align:center;margin:20px 0;background:#f8f9fa;transition:.3s;}
+    .upload-area:hover{border-color:#2980b9;background:#e8f4fd;}
+    .upload-area.dragover{border-color:#27ae60;background:#d5f4e6;}
+    .file-input{display:none;}
+    .upload-btn{background:#3498db;color:#fff;padding:12px 30px;border:none;border-radius:5px;cursor:pointer;font-size:16px;transition:.3s;}
+    .upload-btn:hover{background:#2980b9;}
+    .results{margin-top:20px;}
+    .result-item{background:#f8f9fa;padding:15px;margin:10px 0;border-radius:5px;border-left:4px solid #3498db;}
+    .progress-bar{width:100%;height:20px;background:#ecf0f1;border-radius:10px;overflow:hidden;margin-top:8px;}
+    .progress-fill{height:100%;background:linear-gradient(90deg,#3498db,#2ecc71);width:0%;transition:width .3s;}
+    .download-btn{background:#27ae60;color:#fff;padding:10px 20px;border:none;border-radius:5px;cursor:pointer;text-decoration:none;display:inline-block;margin-top:10px;}
+    .download-btn:hover{background:#229954;}
+    .error{color:#e74c3c;background:#fdf2f2;padding:10px;border-radius:5px;margin:0;}
+    .success{color:#27ae60;background:#f0f9ff;padding:10px;border-radius:5px;margin:0;}
+    .tip{color:#7f8c8d;text-align:center;margin-bottom:30px;}
+    .btn-cancel{background:#e74c3c;color:#fff;padding:6px 12px;border:none;border-radius:5px;cursor:pointer;}
+    .btn-cancel[disabled]{opacity:.6;cursor:not-allowed;}
+    .task-row{display:flex;justify-content:space-between;align-items:center;gap:10px;}
+    .task-meta{display:flex;gap:10px;align-items:center;}
+    .task-eta{color:#7f8c8d;}
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>Excel多语言翻译工具</h1>
+  <p class="tip">支持多语言自动检测，翻译“Title”列到“中文”列</p>
+
+  <div class="upload-area" id="uploadArea">
+    <p>📁 拖拽Excel文件到这里，或者点击选择文件（可多选）</p>
+    <input type="file" id="fileInput" class="file-input" accept=".xlsx" multiple />
+    <button class="upload-btn" id="btnChoose">选择Excel文件</button>
+  </div>
+
+  <div id="taskList" class="results"></div>
+</div>
+
+<script>
+  const uploadArea = document.getElementById('uploadArea');
+  const fileInput = document.getElementById('fileInput');
+  const btnChoose = document.getElementById('btnChoose');
+  const taskList = document.getElementById('taskList');
+
+  btnChoose.onclick = () => fileInput.click();
+
+  uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('dragover'); });
+  uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+  uploadArea.addEventListener('drop', (e) => {
+    e.preventDefault(); uploadArea.classList.remove('dragover');
+    const files = Array.from(e.dataTransfer.files || []);
+    files.forEach(f => handleFile(f));
+  });
+  fileInput.addEventListener('change', (e) => {
+    const files = Array.from(e.target.files || []);
+    files.forEach(f => handleFile(f));
+    fileInput.value = '';
+  });
+
+  function formatETA(s) {
+    if (s == null) return '计算中…';
+    const m = Math.floor(s/60), sec = s%60;
+    return m > 0 ? `${m}分${sec}秒` : `${sec}秒`;
+  }
+
+  function createTaskCard(filename) {
+    const card = document.createElement('div');
+    card.className = 'result-item';
+    card.innerHTML = `
+      <div class="task-row">
+        <strong class="task-name">${filename}</strong>
+        <span class="task-status">初始化…</span>
+      </div>
+      <div class="progress-bar"><div class="progress-fill" style="width:0%;"></div></div>
+      <div class="task-row" style="margin-top:10px;">
+        <div class="task-meta">
+          <button type="button" class="btn-cancel">取消</button>
+          <span class="task-eta"></span>
+        </div>
+        <div class="task-actions"></div>
+      </div>
+    `;
+    taskList.style.display = 'block';
+    taskList.prepend(card);
+
+    return {
+      el: card,
+      setStatus(t){ card.querySelector('.task-status').textContent = t; },
+      setPercent(p){ card.querySelector('.progress-fill').style.width = (p||0) + '%'; },
+      setETA(s){ card.querySelector('.task-eta').textContent = s || ''; },
+      setDownload(url){
+        card.querySelector('.task-actions').innerHTML = `<a class="download-btn" href="${url}" download>📥 下载翻译结果</a>`;
+      },
+      showError(msg){
+        card.querySelector('.task-actions').innerHTML = `<div class="error">${msg}</div>`;
+      },
+      showSuccess(msg){
+        card.querySelector('.task-actions').innerHTML = `<div class="success">${msg}</div>`;
+      },
+      onCancel(fn){
+        const btn = card.querySelector('.btn-cancel');
+        if (btn) btn.onclick = fn;
+      },
+      disableCancel(){ const btn = card.querySelector('.btn-cancel'); if (btn) btn.disabled = true; }
+    };
+  }
+
+  async function handleFile(file) {
+    if (!file || !file.name.endsWith('.xlsx')) {
+      const c = createTaskCard(file?.name || '未命名');
+      c.showError('请选择Excel文件(.xlsx格式)');
+      return;
+    }
+
+    const c = createTaskCard(file.name);
+    c.setStatus('上传中…');
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const resp = await fetch('/upload', { method: 'POST', body: formData });
+      const data = await resp.json().catch(() => null);
+      if (!resp.ok || !data || !data.success || !data.task_id) {
+        c.showError((data && (data.error || data.message)) || `上传失败：HTTP ${resp.status}`);
+        return;
+      }
+
+      const taskId = data.task_id;
+      c.setStatus('任务已启动，等待进度…');
+
+      c.onCancel(async () => {
+        c.disableCancel();
+        try { await fetch(`/tasks/${taskId}/cancel`, { method: 'POST' }); } catch(e) {}
+      });
+
+      const es = new EventSource(`/progress/${taskId}`);
+      es.addEventListener('progress', (e) => {
+        const d = JSON.parse(e.data);
+        if (typeof d.percent === 'number') c.setPercent(d.percent);
+        c.setStatus(d.message || d.status || '进行中');
+        c.setETA(d.eta_seconds != null ? `剩余约 ${formatETA(d.eta_seconds)}` : '');
+
+        if (d.status === 'done') {
+          c.setPercent(100);
+          c.showSuccess('翻译完成');
+          if (d.download_url) c.setDownload(d.download_url);
+          es.close();
+          c.disableCancel();
+        }
+        if (d.status === 'error') {
+          c.showError(d.message || '处理失败');
+          es.close();
+          c.disableCancel();
+        }
+        if (d.status === 'canceled') {
+          c.showError(d.message || '已取消');
+          es.close();
+          c.disableCancel();
+        }
+      });
+      es.onerror = () => { es.close(); };
+    } catch (e) {
+      c.showError('上传失败: ' + e.message);
+    }
+  }
+</script>
+</body>
+</html>
